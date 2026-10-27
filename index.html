@@ -1,0 +1,222 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="color-scheme" content="dark">
+<meta name="theme-color" content="#121212">
+<title>電子書籍リスト</title>
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icon.svg">
+<style>
+:root{color-scheme:dark;--bg:#121212;--card:#1e1e1e;--text:#eaeaea;--sub:#9a9a9a;--accent:#7aa2f7;--danger:#e06c75;--line:#2c2c2c}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"Hiragino Sans","Noto Sans JP",sans-serif;padding-bottom:env(safe-area-inset-bottom)}
+header{position:sticky;top:0;z-index:1;background:var(--bg);padding:14px 16px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:center;gap:8px;padding-top:calc(14px + env(safe-area-inset-top))}
+h1{font-size:18px;margin:0}
+main{padding:12px 16px 40px;max-width:720px;margin:0 auto}
+h2{font-size:14px;color:var(--sub);font-weight:600;margin:20px 0 8px}
+button{font:inherit;background:var(--card);color:var(--text);border:1px solid var(--line);border-radius:8px;padding:8px 12px;cursor:pointer}
+button.primary{background:var(--accent);color:#0b0b0b;border-color:var(--accent);font-weight:600}
+button.danger{color:var(--danger)}
+input{font:inherit;width:100%;background:#151515;color:var(--text);border:1px solid var(--line);border-radius:8px;padding:10px}
+form.add{display:grid;gap:8px;background:var(--card);padding:12px;border-radius:12px}
+.item{background:var(--card);border-radius:12px;padding:12px 14px;margin-bottom:10px;display:flex;flex-direction:column;gap:6px}
+.item a{color:var(--accent);text-decoration:none;font-weight:600;word-break:break-word}
+.item .title{font-weight:600;word-break:break-word}
+.meta{color:var(--sub);font-size:13px}
+.row{display:flex;gap:8px;justify-content:space-between;align-items:center}
+.tools{display:flex;gap:8px;flex-wrap:wrap}
+.count{color:var(--sub);font-size:13px}
+.empty{color:var(--sub);text-align:center;padding:40px 0}
+.msg{color:var(--sub);font-size:13px;min-height:1.2em;margin-top:6px}
+input[type=file]{display:none}
+</style>
+</head>
+<body>
+<header>
+  <h1>電子書籍リスト</h1>
+  <span class="count" id="count"></span>
+</header>
+
+<main>
+  <h2>本を追加</h2>
+  <form class="add" id="addForm">
+    <input id="titleIn" placeholder="タイトル（必須）" required>
+    <input id="siteIn" placeholder="購入先サイト名（例：コミックシーモア）">
+    <input id="urlIn" type="url" placeholder="購入先URL（https://...）">
+    <button class="primary" type="submit">追加</button>
+    <div class="msg" id="addMsg"></div>
+  </form>
+
+  <h2>データ（PC・スマホ間の移動）</h2>
+  <div class="tools">
+    <button id="exportBtn" type="button">書き出し</button>
+    <button id="importBtn" type="button">読み込み</button>
+    <input type="file" id="fileIn" accept="application/json,.json">
+  </div>
+  <div class="msg" id="dataMsg"></div>
+
+  <h2>所持している本</h2>
+  <div id="list"></div>
+</main>
+
+<script>
+(function(){
+  var KEY = "ebookList.v1";
+
+  var items = load();
+  var list = document.getElementById("list");
+  var count = document.getElementById("count");
+
+  function load(){
+    try{
+      var d = JSON.parse(localStorage.getItem(KEY) || "[]");
+      return Array.isArray(d) ? d : [];
+    }catch(e){ return []; }
+  }
+  function save(){
+    try{ localStorage.setItem(KEY, JSON.stringify(items)); return true; }
+    catch(e){ setMsg("dataMsg", "保存に失敗しました。ブラウザの保存容量を確認してください。"); return false; }
+  }
+  function newId(){
+    if(window.crypto && crypto.randomUUID) return crypto.randomUUID();
+    return Date.now().toString(36) + Math.random().toString(36).slice(2);
+  }
+  function safeUrl(u){
+    try{
+      var x = new URL(u);
+      return (x.protocol === "http:" || x.protocol === "https:") ? x.href : "";
+    }catch(e){ return ""; }
+  }
+  function el(tag, cls, text){
+    var e = document.createElement(tag);
+    if(cls) e.className = cls;
+    if(text != null) e.textContent = text;
+    return e;
+  }
+  function setMsg(id, text){ document.getElementById(id).textContent = text; }
+  function ymd(d){
+    var p = function(n){ return String(n).padStart(2, "0"); };
+    return d.getFullYear() + p(d.getMonth()+1) + p(d.getDate());
+  }
+
+  function render(){
+    list.textContent = "";
+    count.textContent = items.length + "冊";
+    if(!items.length){
+      list.appendChild(el("div", "empty", "まだ本が登録されていません"));
+      return;
+    }
+    var sorted = items.slice().sort(function(a, b){ return b.addedAt - a.addedAt; });
+    sorted.forEach(function(it){
+      var box = el("div", "item");
+      var titleNode;
+      if(it.url){
+        titleNode = el("a", "", it.title);
+        titleNode.href = it.url;
+        titleNode.target = "_blank";
+        titleNode.rel = "noopener noreferrer";
+      }else{
+        titleNode = el("div", "title", it.title);
+      }
+      box.appendChild(titleNode);
+      box.appendChild(el("div", "meta", (it.site || "サイト未入力") + " ・ 追加 " + new Date(it.addedAt).toLocaleDateString("ja-JP")));
+      var row = el("div", "row");
+      row.appendChild(el("span", "meta", it.url ? "タップで購入先を開く" : "URLなし"));
+      var del = el("button", "danger", "削除");
+      del.type = "button";
+      del.addEventListener("click", function(){
+        if(!confirm("「" + it.title + "」を削除しますか？")) return;
+        items = items.filter(function(x){ return x.id !== it.id; });
+        if(save()) render();
+      });
+      row.appendChild(del);
+      box.appendChild(row);
+      list.appendChild(box);
+    });
+  }
+
+  // 追加
+  document.getElementById("addForm").addEventListener("submit", function(e){
+    e.preventDefault();
+    var title = document.getElementById("titleIn").value.trim();
+    var site = document.getElementById("siteIn").value.trim();
+    var rawUrl = document.getElementById("urlIn").value.trim();
+    if(!title){ setMsg("addMsg", "タイトルを入力してください"); return; }
+    var url = "";
+    if(rawUrl){
+      url = safeUrl(rawUrl);
+      if(!url){ setMsg("addMsg", "URLは http または https で始まる形式で入力してください"); return; }
+    }
+    items.push({ id: newId(), title: title, site: site, url: url, addedAt: Date.now() });
+    if(!save()){ items.pop(); return; }
+    this.reset();
+    setMsg("addMsg", "追加しました");
+    render();
+  });
+
+  // 書き出し
+  document.getElementById("exportBtn").addEventListener("click", function(){
+    var data = { app: "ebook-list", version: 1, exportedAt: new Date().toISOString(), items: items };
+    var blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement("a");
+    a.href = url;
+    a.download = "ebook-list-" + ymd(new Date()) + ".json";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(function(){ URL.revokeObjectURL(url); }, 1000);
+    setMsg("dataMsg", items.length + "冊を書き出しました");
+  });
+
+  // 読み込み（既存と同じIDのものは除外して追加）
+  var fileIn = document.getElementById("fileIn");
+  document.getElementById("importBtn").addEventListener("click", function(){ fileIn.click(); });
+  fileIn.addEventListener("change", function(){
+    var f = fileIn.files[0];
+    if(!f) return;
+    var reader = new FileReader();
+    reader.onload = function(){
+      var d;
+      try{ d = JSON.parse(reader.result); }
+      catch(e){ setMsg("dataMsg", "ファイルを読み込めませんでした（JSON形式ではありません）"); return; }
+      var incoming = Array.isArray(d) ? d : (d && Array.isArray(d.items) ? d.items : null);
+      if(!incoming){ setMsg("dataMsg", "このアプリで書き出したファイルではないようです"); return; }
+      var ids = {};
+      items.forEach(function(x){ ids[x.id] = true; });
+      var added = 0;
+      incoming.forEach(function(x){
+        if(!x || typeof x.title !== "string" || !x.title.trim()) return;
+        var id = typeof x.id === "string" && x.id ? x.id : newId();
+        if(ids[id]) return;
+        ids[id] = true;
+        items.push({
+          id: id,
+          title: x.title.trim(),
+          site: typeof x.site === "string" ? x.site : "",
+          url: typeof x.url === "string" ? safeUrl(x.url) : "",
+          addedAt: typeof x.addedAt === "number" ? x.addedAt : Date.now()
+        });
+        added++;
+      });
+      if(save()){
+        render();
+        setMsg("dataMsg", added + "冊を追加しました（既に登録済みのものは除外）");
+      }
+      fileIn.value = "";
+    };
+    reader.readAsText(f);
+  });
+
+  render();
+
+  if("serviceWorker" in navigator && (location.protocol === "https:" || location.hostname === "localhost")){
+    navigator.serviceWorker.register("sw.js").catch(function(){});
+  }
+})();
+</script>
+</body>
+</html>
